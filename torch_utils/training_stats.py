@@ -83,6 +83,10 @@ def report(name, value):
         return value
 
     elems = elems.detach().flatten().to(_reduce_dtype)
+    elems = elems[~elems.isnan()] # Filter out NaNs.
+    
+    if elems.numel() == 0:
+        return value
     moments = torch.stack([
         torch.ones_like(elems).sum(),
         elems.sum(),
@@ -192,7 +196,7 @@ class Collector:
         delta = self._get_delta(name)
         if int(delta[0]) == 0:
             return float('nan')
-        return float(delta[1] / delta[0])
+        return float(delta[1] / delta[0]) # num_scalars, sum_of_scalars, sum_of_squares
 
     def std(self, name):
         r"""Returns the standard deviation of the scalars that were

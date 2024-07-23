@@ -257,6 +257,9 @@ def training_loop(
 
                 loss = loss_fn(net=ddp, images=images, labels=labels, augment_pipe=augment_pipe)
                 training_stats.report('Loss/loss', loss)
+                
+                if dist.get_rank() == 0:
+                    wandb.log({"loss_tmp": loss.mean().item()})
                 # loss.sum().mul(loss_scaling / batch_gpu_total).backward()
                 loss.mul(loss_scaling).mean().backward()
 
