@@ -7,6 +7,8 @@ import dnnlib
 from torch_utils import distributed as dist
 from training import ct_training_loop as training_loop
 
+import wandb
+
 import warnings
 warnings.filterwarnings('ignore', 'Grad strides do not match bucket view strides') # False warning printed by PyTorch 1.12.
 
@@ -214,6 +216,10 @@ def main(**kwargs):
         cur_run_id = max(prev_run_ids, default=-1) + 1
         c.run_dir = os.path.join(opts.outdir, f'{cur_run_id:05d}-{desc}')
         assert not os.path.exists(c.run_dir)
+        
+        run_name = f'{cur_run_id:05d}-{desc}'
+        run = wandb.init(name=run_name, config=c)
+
 
     # Print options.
     dist.print0()
@@ -242,6 +248,8 @@ def main(**kwargs):
         with open(os.path.join(c.run_dir, 'training_options.json'), 'wt') as f:
             json.dump(c, f, indent=2)
         dnnlib.util.Logger(file_name=os.path.join(c.run_dir, 'log.txt'), file_mode='a', should_flush=True)
+
+    
 
     # Train.
     training_loop.training_loop(**c)

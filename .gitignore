@@ -169,3 +169,7 @@ ct-evals
 slurm*
 debug.sh
 *.out
+
+
+ct-runs/
+wandb/

@@ -12,6 +12,7 @@ import dnnlib
 from torch_utils import distributed as dist
 from torch_utils import training_stats
 from torch_utils import misc
+import wandb
 
 from metrics import metric_main
 
@@ -19,8 +20,8 @@ from metrics import metric_main
 
 def setup_snapshot_image_grid(training_set, random_seed=0):
     rnd = np.random.RandomState(random_seed)
-    gw = np.clip(7680 // training_set.image_shape[2], 7, 16)
-    gh = np.clip(4320 // training_set.image_shape[1], 4, 16)
+    gw = np.clip(7680 // training_set.image_shape[2], 4, 4) # best clip ever
+    gh = np.clip(4320 // training_set.image_shape[1], 4, 4)
 
     # No labels => show random subset of training samples.
     if not training_set.has_labels:
@@ -131,6 +132,7 @@ def training_loop(
     enable_tf32         = False,     # Enable tf32 for A100/H100 GPUs?
     device              = torch.device('cuda'),
 ):
+    
     # Initialize.
     start_time = time.time()
     np.random.seed((seed * dist.get_world_size() + dist.get_rank()) % (1 << 31))
@@ -250,6 +252,8 @@ def training_loop(
                 images, labels = next(dataset_iterator)
                 images = images.to(device).to(torch.float32) / 127.5 - 1
                 labels = labels.to(device)
+                
+                dist.print0(f'{images.shape=}, {round_idx=}')
 
                 loss = loss_fn(net=ddp, images=images, labels=labels, augment_pipe=augment_pipe)
                 training_stats.report('Loss/loss', loss)
@@ -276,6 +280,12 @@ def training_loop(
         # Perform maintenance tasks once per tick.
         cur_nimg += batch_size
         done = (cur_nimg >= total_kimg * 1000)
+        
+        if dist.get_rank() == 0:
+            wandb.log({"tick": cur_tick, "kimg": cur_nimg / 1e3, "loss": training_stats.default_collector['Loss/loss'], "mean_loss": training_stats.default_collector['Loss/loss'] / batch_size,
+                 "stage": stage, "ratio": loss_fn.ratio})
+
+
         if (not done) and (cur_tick != 0) and (cur_nimg < tick_start_nimg + kimg_per_tick * 1000):
             continue
 
@@ -294,7 +304,7 @@ def training_loop(
         fields += [f"reserved {training_stats.report0('Resources/peak_gpu_mem_reserved_gb', torch.cuda.max_memory_reserved(device) / 2**30):<6.2f}"]
         torch.cuda.reset_peak_memory_stats()
         dist.print0(' '.join(fields))
-
+        
         # Check for abort.
         if (not done) and dist.should_stop():
             done = True
@@ -341,8 +351,10 @@ def training_loop(
         if (sample_ticks is not None) and (done or cur_tick % sample_ticks == 0) and dist.get_rank() == 0:
             dist.print0('Exporting sample images...')
             images = [generator_fn(ema, z, c).cpu() for z, c in zip(grid_z, grid_c)]
-            images = torch.cat(images).numpy()
-            save_image_grid(images, os.path.join(run_dir, f'{cur_tick:06d}.png'), drange=[-1,1], grid_size=grid_size)
+            images = torch.cat(images)
+            wandb.log({"images": wandb.Image(images)})
+            images = images.numpy()
+            save_image_grid(images, os.path.join(run_dir, f'{cur_tick:06d}.png'), drange=[-1,1], grid_size=grid_size)            
             del images
     
         # Evaluation
